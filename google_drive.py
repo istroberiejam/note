@@ -85,7 +85,7 @@ def drive_request(handler, path, p):
     if not fid or any(c not in 'abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_-' for c in fid): raise ValueError('Invalid Drive file.')
     url='https://www.googleapis.com/drive/v3/files/'+fid
     meta=json.loads(get(url+'?fields=id,name,mimeType,size',token))
-    if int(meta.get('size',0))>24*1024*1024: raise ValueError('Please use Drive files smaller than 24 MB.')
+    if int(meta.get('size',0))>24*1024*1024: raise ValueError('Documents must be smaller than 24 MB. For video/audio up to 1.5 GB, choose Lecture recording / transcript before importing.')
     conversions={'application/vnd.google-apps.document':('application/vnd.openxmlformats-officedocument.wordprocessingml.document','.docx'),'application/vnd.google-apps.presentation':('application/vnd.openxmlformats-officedocument.presentationml.presentation','.pptx')}
     if meta['mimeType'] in conversions:
         mime,ext=conversions[meta['mimeType']]; url+='/export?'+urllib.parse.urlencode({'mimeType':mime});name=meta['name']+ext

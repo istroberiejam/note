@@ -2,6 +2,7 @@ import base64, io, json, os, re, urllib.request, urllib.error, uuid
 from http.server import ThreadingHTTPServer, SimpleHTTPRequestHandler
 from pathlib import Path
 import google_drive
+import lectures
 ROOT = Path(__file__).parent
 
 def api(url, payload, token):
@@ -56,9 +57,13 @@ class Handler(SimpleHTTPRequestHandler):
             origin = self.headers.get('Origin')
             if origin and origin != google_drive.BASE and origin != 'http://'+self.headers.get('Host',''):
                 return self.send_json({'error':'Cross-site request rejected.'},403)
+            if self.path=='/api/lecture/chunk':
+                return self.send_json(lectures.append(self))
             n=int(self.headers.get('Content-Length',0))
             if n>40*1024*1024: raise ValueError('Upload limit is 28 MB per file. Split longer recordings into segments.')
             p=json.loads(self.rfile.read(n))
+            if self.path.startswith('/api/lecture/'):
+                return self.send_json(lectures.request(self,p))
             if self.path=='/api/google/disconnect':
                 sid, _ = google_drive.session(self)
                 with google_drive.LOCK: google_drive.SESSIONS.pop(sid, None)
@@ -70,6 +75,7 @@ class Handler(SimpleHTTPRequestHandler):
                 if not any(x['text'].strip() for x in pages): raise ValueError('No text found. This file may require OCR.')
                 return self.send_json({'pages':pages})
             if self.path=='/api/transcribe':
+                lectures.owner(self)
                 key=os.getenv('OPENAI_API_KEY')
                 if not key: raise ValueError('Configure OPENAI_API_KEY on the server to transcribe recordings.')
                 data=base64.b64decode(p['data'],validate=True)
@@ -80,6 +86,7 @@ class Handler(SimpleHTTPRequestHandler):
                 with urllib.request.urlopen(req,timeout=240) as r: result=json.load(r)
                 return self.send_json(result)
             if self.path=='/api/generate':
+                lectures.owner(self)
                 key=os.getenv('OPENAI_API_KEY')
                 if not key: raise ValueError('Configure OPENAI_API_KEY on the server to generate reviews.')
                 kind=p['kind']; source=json.dumps(p['project'],ensure_ascii=False)
