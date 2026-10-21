@@ -100,4 +100,4 @@ class Handler(SimpleHTTPRequestHandler):
         except Exception as e: self.send_json({'error':str(e)},400)
 
 if __name__=='__main__':
-    ThreadingHTTPServer(('127.0.0.1',int(os.getenv('PORT','8000'))),Handler).serve_forever()
+    ThreadingHTTPServer((os.getenv('HOST', '127.0.0.1'), int(os.getenv('PORT', '8000'))), Handler).serve_forever()

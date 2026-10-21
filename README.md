@@ -37,3 +37,12 @@ python -m unittest discover -s tests -v
 node --check static/app.js
 ```
 Tests exercise HTTP document extraction including tables, slide extraction, all four exported sections, and app serving. External API calls require configured accounts and have not been integration-tested. Manual browser interaction and PDF layout fidelity have not been verified.
+
+## Deploy on Render
+Create a Python web service connected to this repository's `main` branch.
+
+- Build command: `pip install -r requirements.txt`
+- Start command: `HOST=0.0.0.0 python server.py`
+- Health check path: `/api/status`
+
+Render supplies `PORT`. `HOST` defaults to loopback for local use; the deployment command explicitly enables external access. Leave API credentials unset for an initial public demo: extraction and Word export work without them. Add authentication and request/rate limits before enabling paid AI or Google credentials on a public service. This prototype has no user accounts or server-side notebook storage.
