@@ -4,6 +4,7 @@ from pathlib import Path
 import google_drive
 import lectures
 import exports
+import books
 ROOT = Path(__file__).parent
 
 def api(url, payload, token):
@@ -47,18 +48,22 @@ class Handler(SimpleHTTPRequestHandler):
         super().log_request(code, size)
     def do_GET(self):
         if google_drive.oauth_get(self): return
-        if self.path=='/api/status': return self.send_json({'ai':bool(os.getenv('OPENAI_API_KEY')), 'google':bool((google_drive.session(self)[1] or {}).get('access_token')), 'googleConfigured':google_drive.configured()})
+        if self.path=='/api/status': return self.send_json({'ai':bool(os.getenv('OPENAI_API_KEY')), 'google':bool((google_drive.session(self)[1] or {}).get('access_token')), 'googleConfigured':google_drive.configured(), 'bookMaxBytes':books.MAX_BYTES})
         return super().do_GET()
     def do_POST(self):
         try:
             origin = self.headers.get('Origin')
             if origin and origin != google_drive.BASE and origin != 'http://'+self.headers.get('Host',''):
                 return self.send_json({'error':'Cross-site request rejected.'},403)
+            if self.path=='/api/books/upload':
+                return self.send_json(books.upload(self))
             if self.path=='/api/lecture/chunk':
                 return self.send_json(lectures.append(self))
             n=int(self.headers.get('Content-Length',0))
             if n>40*1024*1024: raise ValueError('Upload limit is 28 MB per file. Split longer recordings into segments.')
             p=json.loads(self.rfile.read(n))
+            if self.path=='/api/books/drive':
+                return self.send_json(books.drive(self,p))
             if self.path.startswith('/api/lecture/'):
                 return self.send_json(lectures.request(self,p))
             if self.path=='/api/google/disconnect':

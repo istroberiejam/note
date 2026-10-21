@@ -12,6 +12,7 @@ const path=require('node:path');
   await page.route('**/api/status',r=>r.fulfill({json:{google:true,googleConfigured:true,ai:true}}));
   await page.route('**/api/drive/list',r=>r.fulfill({json:{files:[{id:'pdf',name:'Lesson.pdf',mimeType:'application/pdf'},{id:'video',name:'Lecture.mp4',mimeType:'video/mp4'}]}}));
   await page.route('**/api/drive/file',r=>r.fulfill({json:{name:'Lesson.pdf',data:Buffer.from('sample').toString('base64')}}));
+  await page.route('**/api/books/drive',r=>r.fulfill({json:{name:'Lesson.pdf',pages:[{location:'Page 1',text:'Reference book content'}]}}));
   let releaseImport,holdImport=false;
   await page.route('**/api/extract',async r=>{if(holdImport)await new Promise(resolve=>releaseImport=resolve);await r.fulfill({json:{pages:[{location:'Page 1',text:'Exact original learning material'}]}})});
   await page.goto('http://127.0.0.1:8137');

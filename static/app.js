@@ -13,7 +13,7 @@ $('#notebook-close').onclick=()=>$('#notebook-dialog').close();
 $('#notebook-form').onsubmit=e=>{e.preventDefault();try{const n=notebooks.add($('#notebook-name').value);project=n.project;tab='notes';$('#notebook-dialog').close();renderSubjects();render()}catch(e){$('#notebook-error').textContent=e.message}};
 const esc=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 function notice(s){$('#notice').hidden=!s;$('#notice').textContent=s}
-function save(){try{notebooks.persist()}catch{notice('Browser storage is full. Export your notes before closing this page.')}}
+function save(){try{notebooks.persist();return true}catch{notice('Browser storage is full. These changes are only in memory. Export your notes before closing this page.');return false}}
 async function api(path,body){const r=await fetch('/api/'+path,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});const d=await r.json();if(!r.ok)throw Error(d.error||'Request failed');return d}
 function render(){ document.querySelectorAll('[data-metadata]').forEach(el=>el.value=(project.metadata||{})[el.dataset.metadata]||'');$('#title').value=project.title;document.querySelectorAll('[data-tab]').forEach(b=>b.classList.toggle('selected',b.dataset.tab===tab));$('#source-list').textContent=project.sources.map(s=>'✓ '+s).join('   ·   ');$('#add').hidden=tab!=='notes';$('#generate').hidden=tab==='references';$('#generate').textContent=tab==='notes'?'✦ Match lecture notes':`✦ Generate 100 ${tab==='quiz'?'quiz':'exam'} items`;$('#view-label').textContent={notes:'YOUR CLASS NOTES',references:'BOOK REFERENCES',quiz:'QUIZ REVIEW',exam:'EXAM REVIEW'}[tab];$('#view-description').textContent={notes:'Original material on the left. The discussion beside it.',references:'Separate chapter notes, with page locations and related concepts.',quiz:'Identification & enumeration. Answers immediately after each item.',exam:'Multiple choice. Answers and option-by-option elimination after each item.'}[tab];
 if(tab==='notes')$('#content').innerHTML=project.concepts.length?project.concepts.map(c=>`<article class="concept"><div class="concept-header"><input data-id="${c.id}" data-field="title" aria-label="Concept title" value="${esc(c.title)}"><small>${esc(c.source)}</small><button data-delete="${c.id}" aria-label="Delete concept">×</button></div><div class="columns"><div><div class="label">CLASS MATERIAL · VERBATIM</div><textarea data-id="${c.id}" data-field="text" aria-label="Class material">${esc(c.text)}</textarea></div><div><div class="label">SIDE NOTE/S · LECTURE DISCUSSION</div><textarea data-id="${c.id}" data-field="side" aria-label="Lecture side notes" placeholder="Add the teacher’s explanation, or match an uploaded lecture…">${esc(c.side)}</textarea></div></div></article>`).join(''):'<div class="empty"><small>YOUR IDEAS BELONG HERE</small><h2>A blank page. A clearer mind.</h2><p>Add your first class material to start building your notebook.<br>Every concept gets its own space for the lecture discussion.</p></div>';
@@ -31,10 +31,17 @@ function appendPages(notebookId,kind,file,pages){
  else if(kind==='book'){for(const p of pages)target.references.push({name:file.name,location:p.location,text:p.text,related:''})}
  else target.lectures.push({name:file.name,text:pages.map(p=>p.text).join('\n')});
  const label={class:'Learning material',book:'Book reference',lecture:'Lecture'}[kind];target.sources.push(label+' · '+file.name);
- save();if(activeNotebook()===notebookId){tab=kind==='book'?'references':'notes';render()}
- notice(label+' imported into '+notebooks.get(notebookId).name+'.');
+ const saved=save();if(activeNotebook()===notebookId){tab=kind==='book'?'references':'notes';render()}
+ if(saved)notice(label+' imported into '+notebooks.get(notebookId).name+'.');
+}
+let bookMaxBytes=500000000;
+function bookRange(){const start=$('#book-page-start').value,end=$('#book-page-end').value;if(start&&Number(start)<1||end&&Number(end)<1||start&&end&&Number(start)>Number(end))throw Error('Choose a valid PDF page range starting at page 1.');return {start,end}}
+async function importBook(file,notebookId,range){
+ if(file.size>bookMaxBytes)throw Error('Books can be up to '+(bookMaxBytes/1000000)+' MB.');notice('Importing '+file.name+'… Large books may take a while.');
+ const r=await fetch('/api/books/upload',{method:'POST',headers:{'Content-Type':'application/octet-stream','X-File-Name':encodeURIComponent(file.name),'X-Page-Start':range.start,'X-Page-End':range.end},body:file});const d=await r.json();if(!r.ok)throw Error(d.error||'Book import failed.');appendPages(notebookId,'book',file,d.pages);
 }
 async function importFile(file,kind,notebookId){
+ if(kind==='book'){await importBook(file,notebookId,bookRange());return}
  if(kind==='lecture'&&!file.name.toLowerCase().endsWith('.txt')){await uploadLecture(file,notebookId);return}
  if(file.size>28*1024*1024)throw Error('Documents and text transcripts must be under 28 MB. Lecture video/audio supports up to 1.5 GB.');
  notice('Processing '+file.name+' for '+notebooks.get(notebookId).name+'…');
@@ -52,12 +59,13 @@ renderSubjects();save();
 fetch('/api/status').then(r=>r.json()).then(d=>{
 $('#connections').textContent=`AI: ${d.ai?'configured':'not configured'}. Google Drive: ${d.google?'connected':d.googleConfigured?'ready to connect':'not configured'}.`;
 $('.connect').textContent=d.google?'Reconnect Google Drive':'Connect Google Drive';
-$('#disconnect').hidden=!d.google;
+$('#disconnect').hidden=!d.google;if(d.bookMaxBytes){bookMaxBytes=d.bookMaxBytes;$('#book-size-label').textContent='PDF · DOCX · TXT · UP TO '+bookMaxBytes/1000000+' MB';}
 });render();
 let nextDrivePage='',driveContext=null;
 const categoryName={class:'Learning materials',book:'Book references',lecture:'Lecture recordings'};
 function suitableDriveFile(file,kind){
  const ext=file.name.toLowerCase().split('.').pop();
+ if(kind==='book')return ['pdf','docx','txt','md'].includes(ext)||file.mimeType==='application/vnd.google-apps.document';
  if(kind==='lecture')return ['mp3','mp4','wav','m4a','mov','webm','mkv','txt'].includes(ext);
  return ['pdf','pptx','docx','txt','md'].includes(ext)||['application/vnd.google-apps.document','application/vnd.google-apps.presentation'].includes(file.mimeType);
 }
@@ -68,11 +76,13 @@ async function listDrive(more=false){const context=driveContext;try{
  nextDrivePage=d.nextPageToken||'';$('#drive-more').hidden=!nextDrivePage;if(!$('#drive-files').children.length)$('#drive-files').textContent='No files found.';
  }catch(e){notice(e.message);$('#drive-dialog').close()}}
 document.querySelectorAll('[data-drive-kind]').forEach(b=>b.onclick=()=>{
- driveContext={kind:b.dataset.driveKind,notebookId:activeNotebook()};nextDrivePage='';$('#drive-search').value='';$('#drive-files').textContent='Loading…';$('#drive-category').textContent='Import into '+notebooks.get().name+' → '+categoryName[driveContext.kind];$('#drive-dialog').showModal();listDrive();
+ let range={};try{if(b.dataset.driveKind==='book')range=bookRange()}catch(e){notice(e.message);return}
+ driveContext={kind:b.dataset.driveKind,notebookId:activeNotebook(),range};nextDrivePage='';$('#drive-search').value='';$('#drive-files').textContent='Loading…';$('#drive-category').textContent='Import into '+notebooks.get().name+' → '+categoryName[driveContext.kind];$('#drive-dialog').showModal();listDrive();
 });
 $('#drive-find').onclick=()=>listDrive();$('#drive-more').onclick=()=>listDrive(true);$('#drive-close').onclick=()=>$('#drive-dialog').close();
 async function importDrive(file,context){const {kind,notebookId}=context;$('#drive-dialog').close();notice('Downloading '+file.name+' from Drive…');try{
  if(kind==='lecture'&&!file.name.toLowerCase().endsWith('.txt')){await driveLecture(file,notebookId);return}
+ if(kind==='book'){const d=await api('books/drive',{id:file.id,...context.range});appendPages(notebookId,'book',{name:d.name},d.pages);return}
  const downloaded=await api('drive/file',{id:file.id});const bytes=Uint8Array.from(atob(downloaded.data),c=>c.charCodeAt(0));await importFile(new File([bytes],downloaded.name),kind,notebookId);
  }catch(e){notice(e.message)}}
 $('#disconnect').onclick=async()=>{try{await api('google/disconnect',{});location.reload()}catch(e){notice(e.message)}};

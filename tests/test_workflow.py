@@ -24,6 +24,11 @@ class Workflow(unittest.TestCase):
   p={'title':'Chemistry','concepts':[{'title':'Accuracy','text':'Exact source','source':'Slide 1','side':'Teacher discussion'}],'references':[{'name':'Book chapter','text':'Reference text'}],'quiz':'1. Answer','exam':'1. A, eliminate B'}
   r=self.post('export',p);d=Document(io.BytesIO(base64.b64decode(r['data'])));text='\n'.join(p.text for p in d.paragraphs)
   for expected in ['Exact source','Teacher discussion','Book references','Reference text','Quiz review','Exam review']:self.assertIn(expected,text)
+ def test_binary_book_upload(self):
+  d=Document();d.add_paragraph('Verbatim book chapter.');out=io.BytesIO();d.save(out)
+  req=urllib.request.Request(self.url+'/api/books/upload',data=out.getvalue(),headers={'Content-Type':'application/octet-stream','X-File-Name':'chapter.docx'})
+  with urllib.request.urlopen(req) as r:result=json.load(r)
+  self.assertEqual(result['name'],'chapter.docx');self.assertEqual(result['pages'][0]['text'],'Verbatim book chapter.')
  def test_static_ui(self):
   with urllib.request.urlopen(self.url) as r:self.assertIn(b'Class notebook',r.read())
 if __name__=='__main__':unittest.main()
