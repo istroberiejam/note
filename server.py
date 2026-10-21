@@ -1,6 +1,7 @@
 import base64, io, json, os, re, urllib.request, urllib.error, uuid
 from http.server import ThreadingHTTPServer, SimpleHTTPRequestHandler
 from pathlib import Path
+import google_drive
 ROOT = Path(__file__).parent
 
 def api(url, payload, token):
@@ -43,14 +44,27 @@ class Handler(SimpleHTTPRequestHandler):
     def __init__(self,*a,**kw): super().__init__(*a,directory=str(ROOT/'static'),**kw)
     def send_json(self,obj,status=200):
         b=json.dumps(obj).encode(); self.send_response(status); self.send_header('Content-Type','application/json'); self.send_header('Content-Length',str(len(b))); self.end_headers(); self.wfile.write(b)
+    def log_request(self, code='-', size='-'):
+        if self.path.startswith('/auth/'): return
+        super().log_request(code, size)
     def do_GET(self):
-        if self.path=='/api/status': return self.send_json({'ai':bool(os.getenv('OPENAI_API_KEY')), 'google':bool(os.getenv('GOOGLE_ACCESS_TOKEN'))})
+        if google_drive.oauth_get(self): return
+        if self.path=='/api/status': return self.send_json({'ai':bool(os.getenv('OPENAI_API_KEY')), 'google':bool((google_drive.session(self)[1] or {}).get('access_token')), 'googleConfigured':google_drive.configured()})
         return super().do_GET()
     def do_POST(self):
         try:
+            origin = self.headers.get('Origin')
+            if origin and origin != google_drive.BASE and origin != 'http://'+self.headers.get('Host',''):
+                return self.send_json({'error':'Cross-site request rejected.'},403)
             n=int(self.headers.get('Content-Length',0))
             if n>40*1024*1024: raise ValueError('Upload limit is 28 MB per file. Split longer recordings into segments.')
             p=json.loads(self.rfile.read(n))
+            if self.path=='/api/google/disconnect':
+                sid, _ = google_drive.session(self)
+                with google_drive.LOCK: google_drive.SESSIONS.pop(sid, None)
+                return self.send_json({'disconnected':True})
+            if self.path in ('/api/drive/list', '/api/drive/file'):
+                return self.send_json(google_drive.drive_request(self,self.path,p))
             if self.path=='/api/extract':
                 pages=extract(p['name'],base64.b64decode(p['data'],validate=True))
                 if not any(x['text'].strip() for x in pages): raise ValueError('No text found. This file may require OCR.')
@@ -85,8 +99,7 @@ class Handler(SimpleHTTPRequestHandler):
                 out=io.BytesIO(); d.save(out)
                 return self.send_json({'data':base64.b64encode(out.getvalue()).decode()})
             if self.path=='/api/google':
-                token=os.getenv('GOOGLE_ACCESS_TOKEN')
-                if not token: raise ValueError('Configure GOOGLE_ACCESS_TOKEN with the Google Docs documents scope. See README for setup; Word export works without Google access.')
+                token=google_drive.access_token(self)
                 doc=api('https://docs.googleapis.com/v1/documents',{'title':p.get('title','Class notes')},token); did=doc['documentId']
                 try:
                     response=api(f'https://docs.googleapis.com/v1/documents/{did}:batchUpdate',{'requests':[{'addDocumentTab':{'tabProperties':{'title':title}}} for title,_ in sections(p)]},token)
