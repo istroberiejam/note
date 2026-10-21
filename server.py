@@ -3,6 +3,7 @@ from http.server import ThreadingHTTPServer, SimpleHTTPRequestHandler
 from pathlib import Path
 import google_drive
 import lectures
+import exports
 ROOT = Path(__file__).parent
 
 def api(url, payload, token):
@@ -36,10 +37,6 @@ def extract(name, data):
         return [{'location':'Document', 'text':'\n'.join(parts)}]
     if suffix in ('.txt','.md'): return [{'location':'Text', 'text':data.decode('utf-8-sig')}]
     raise ValueError('Use PDF, PPTX, DOCX, TXT or MD. Convert legacy .ppt files to .pptx first. Scanned PDFs need OCR before import.')
-
-def sections(project):
-    concepts=project.get('concepts',[])
-    return [ ('Class notes','\n\n'.join(c['title']+'\n'+c['text']+'\nSource: '+c.get('source','')+'\nSIDE NOTE/S\n'+c.get('side','') for c in concepts)), ('Book references','\n\n'.join(x.get('name','')+'\n'+x.get('text','') for x in project.get('references',[]))), ('Quiz review', project.get('quiz','')), ('Exam review',project.get('exam','')) ]
 
 class Handler(SimpleHTTPRequestHandler):
     def __init__(self,*a,**kw): super().__init__(*a,directory=str(ROOT/'static'),**kw)
@@ -97,24 +94,9 @@ class Handler(SimpleHTTPRequestHandler):
                 if choice.get('finish_reason')=='length': raise ValueError('Generation exceeded the response limit. Reduce chapter scope and try again.')
                 return self.send_json({'text':choice['message']['content']})
             if self.path=='/api/export':
-                from docx import Document
-                d=Document(); d.add_heading(p.get('title','Class notes'),0)
-                for i,(title,body) in enumerate(sections(p)):
-                    if i: d.add_page_break()
-                    d.add_heading(title,1)
-                    for line in body.splitlines(): d.add_paragraph(line)
-                out=io.BytesIO(); d.save(out)
-                return self.send_json({'data':base64.b64encode(out.getvalue()).decode()})
+                return self.send_json({'data':base64.b64encode(exports.word(p)).decode()})
             if self.path=='/api/google':
-                token=google_drive.access_token(self)
-                doc=api('https://docs.googleapis.com/v1/documents',{'title':p.get('title','Class notes')},token); did=doc['documentId']
-                try:
-                    response=api(f'https://docs.googleapis.com/v1/documents/{did}:batchUpdate',{'requests':[{'addDocumentTab':{'tabProperties':{'title':title}}} for title,_ in sections(p)]},token)
-                    tabs=[r['addDocumentTab']['tabProperties']['tabId'] for r in response['replies']]
-                    requests=[{'insertText':{'endOfSegmentLocation':{'tabId':tab},'text':title+'\n\n'+(body or 'No content yet.')+'\n'}} for tab,(title,body) in zip(tabs,sections(p))]
-                    api(f'https://docs.googleapis.com/v1/documents/{did}:batchUpdate',{'requests':requests},token)
-                except Exception as e: raise ValueError('Google document was created but population failed. Check your Drive for '+did+' before retrying. '+str(e))
-                return self.send_json({'url':'https://docs.google.com/document/d/'+did+'/edit'})
+                return self.send_json(exports.google_export(p,google_drive.access_token(self),api,google_drive.get))
             self.send_json({'error':'Unknown endpoint'},404)
         except urllib.error.HTTPError as e: self.send_json({'error':f'Provider returned HTTP {e.code}. Check API access, quota, and credential permissions.'},502)
         except Exception as e: self.send_json({'error':str(e)},400)
